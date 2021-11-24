@@ -159,6 +159,15 @@ class Database:
             for l in out[:100]:
                 print(l)
 
+    def get_tf_idf_score(self, term, tf_idf_thresh = 0, limit = 1000):
+        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
+            cursor.execute("""
+            SELECT `document_id`, `tf_idf` FROM `tf_idf` WHERE `vocabulary_id` = (
+                SELECT `vocabulary_id` FROM `vocabulary` WHERE `term` = ?
+            ) AND `tf_idf` > ? ORDER BY `tf_idf` DESC LIMIT ?;
+            """, (term, tf_idf_thresh, limit))
+            return {i[0]: i[1] for i in cursor.fetchall()}
+
 if __name__ == "__main__":
     with Database() as db:
         # print(db.get_num_documents())
@@ -166,4 +175,6 @@ if __name__ == "__main__":
         # print(db.get_document_id_by_name("../Datasets/Wikibooks/Russian Lesson 2.html"))
         # print(db.test_log(100))
         # print(db.test_log(21))
-        db.get_tf_idf_table()
+        # db.get_tf_idf_table()
+        for i, v in db.get_tf_idf_score("enzyme", 1).items():
+            print(i, v)
