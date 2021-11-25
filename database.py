@@ -45,14 +45,23 @@ class Database:
                 `vocabulary_id` INTEGER PRIMARY KEY,
                 `term` TEXT NOT NULL
             );""")
+            # \/ VERY UGLY NOT HOW THOS SHOULD BE DONE
             cursor.execute("""
-            CREATE TABLE IF NOT EXISTS `term_frequency` ( 
-                `vocabulary_id` INT UNSIGNED NOT NULL, 
+            CREATE TABLE IF NOT EXISTS `linked_terms` (
+                `linked_term_id` INTEGER PRIMARY KEY,
+                `chain` TEXT NOT NULL
+            );""")
+            cursor.execute("CREATE UNIQUE INDEX unique_chain on linked_terms (chain);")
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS `term_weights` (
+                `term_weight_id` INTEGER PRIMARY KEY, 
+                `vocabulary_id` INT UNSIGNED NULL,
+                `linked_term_id` INT UNSIGNED NULL, 
                 `document_id` INT UNSIGNED NOT NULL, 
-                `frequency` INT UNSIGNED NOT NULL, 
-                FOREIGN KEY (`vocabulary_id`) REFERENCES `vocabulary`(`vocabulary_id`), 
-                FOREIGN KEY (`document_id`) REFERENCES `documents`(`document_id`), 
-                PRIMARY KEY(`vocabulary_id`, `document_id`) 
+                `weight` INT UNSIGNED NOT NULL, 
+                FOREIGN KEY (`vocabulary_id`) REFERENCES `vocabulary`(`vocabulary_id`),
+                FOREIGN KEY (`linked_term_id`) REFERENCES `linked_terms`(`linked_term_id`), 
+                FOREIGN KEY (`document_id`) REFERENCES `documents`(`document_id`)
             );""")
             cursor.execute("CREATE UNIQUE INDEX unique_terms on vocabulary (term);")
 
@@ -79,12 +88,38 @@ class Database:
         with self.__connection.cursor(factory = DatabaseCursor) as cursor:
             cursor.executemany("INSERT OR IGNORE INTO vocabulary(term) VALUES (?);", [(term, ) for term in terms])
 
-    def append_terms_in_document(self, document_id, counter):
+    def get_vocabulary_ids(self, terms):
+        # can't do executemany with select statements :(
+        out = {}
+        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
+            for term in terms:
+                cursor.execute("SELECT `vocabulary_id` FROM `vocabulary` WHERE `term` = ?;", (term, )) 
+                out[term] = cursor.fetchone()[0]
+        return out
+
+    def append_merged_terms(self, merged_terms):
+        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
+            cursor.executemany("INSERT OR IGNORE INTO `linked_terms`(`chain`) VALUES (?);", [(i, ) for i in merged_terms])
+
+    def append_document_term_weights(self, terms, document_id):
         with self.__connection.cursor(factory = DatabaseCursor) as cursor:
             cursor.executemany("""
-            INSERT INTO `term_frequency`(`vocabulary_id`, `document_id`, `frequency`) 
-            VALUES ((SELECT `vocabulary_id` FROM `vocabulary` WHERE `term` = ?), ?, ?)
-            """, [(i[0], document_id, i[1]) for i in counter.items()])
+            INSERT INTO `term_weights` 
+            (`vocabulary_id`, `linked_term_id`, `document_id`, `weight`)
+            VALUES ((
+                SELECT `vocabulary_id` FROM `vocabulary` WHERE `term` = ?
+            ), NULL, ?, ?);
+            """, [(i[0], document_id, i[1]) for i in terms.items()])
+
+    def append_document_linked_term_weights(self, linked_terms, document_id):
+        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
+            cursor.executemany("""
+            INSERT INTO `term_weights` 
+            (`vocabulary_id`, `linked_term_id`, `document_id`, `weight`)
+            VALUES (NULL, (
+                SELECT `linked_term_id` FROM `linked_terms` WHERE `chain` = ?
+            ), ?, ?);
+            """, [(i[0], document_id, i[1]) for i in linked_terms.items()])
 
     def build_tf_idf_table(self):
         with self.__connection.cursor(factory = DatabaseCursor) as cursor:
@@ -96,27 +131,27 @@ class Database:
             CREATE VIEW IF NOT EXISTS `vocab_count` AS 
             SELECT vocabulary_id, 
             COUNT(vocabulary_id) AS vocabulary_count
-            FROM term_frequency 
+            FROM term_weights 
             GROUP BY vocabulary_id;
             """)
             cursor.execute("""
             CREATE VIEW IF NOT EXISTS `tf_idf` AS SELECT
-            `term_frequency`.`vocabulary_id` AS `vocabulary_id`,
+            `term_weights`.`vocabulary_id` AS `vocabulary_id`,
             `document_id`,
-            `term_frequency`.`frequency`,
-            LOG_TF(`frequency`) AS tf,
+            `term_weights`.`weight`,
+            LOG_TF(`weight`) AS tf,
             (SELECT COUNT(`document_id`) FROM `documents`) AS n,
             `vocab_count`.`vocabulary_count` AS df,
             (SELECT LOG(CAST(COUNT(`document_id`) AS REAL) / `vocab_count`.`vocabulary_count`) FROM documents) AS idf,
-            LOG_TF(`frequency`) * (SELECT LOG(CAST(COUNT(`document_id`) AS REAL) / `vocab_count`.`vocabulary_count`) FROM documents) AS tf_idf
-            FROM `term_frequency`
+            LOG_TF(`weight`) * (SELECT LOG(CAST(COUNT(`document_id`) AS REAL) / `vocab_count`.`vocabulary_count`) FROM documents) AS tf_idf
+            FROM `term_weights`
             INNER JOIN `vocab_count`
-            ON `vocab_count`.`vocabulary_id` = `term_frequency`.`vocabulary_id`
+            ON `vocab_count`.`vocabulary_id` = `term_weights`.`vocabulary_id`
             ;""")
 
     def get_term_frequencies(self):
         with self.__connection.cursor(factory = DatabaseCursor) as cursor:
-            cursor.execute("SELECT * FROM `term_frequency`;")
+            cursor.execute("SELECT * FROM `term_weights`;")
             return cursor.fetchall()
 
     def append_tf_idf_table(self, tfs):
@@ -126,8 +161,8 @@ class Database:
             INSERT INTO `tf_idf`(`vocabulary_id`, `document_id`, `tf`, `idf`, `tf_idf`)
             VALUES (
                 ?, ?, ?, 
-                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_frequency WHERE vocabulary_id = ?),
-                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_frequency WHERE vocabulary_id = ?) * ?)
+                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_weights WHERE vocabulary_id = ?),
+                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_weights WHERE vocabulary_id = ?) * ?)
             """, [(i[0], i[1], i[2], i[0], i[0], i[2]) for i in tfs])
 
     def append_tf_idf_table_single(self, vocabulary_id, document_id, tf):
@@ -136,8 +171,8 @@ class Database:
             INSERT INTO `tf_idf`(`vocabulary_id`, `document_id`, `tf`, `idf`, `tf_idf`)
             VALUES (
                 ?, ?, ?, 
-                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_frequency WHERE vocabulary_id = ?),
-                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_frequency WHERE vocabulary_id = ?) * ?)
+                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_weights WHERE vocabulary_id = ?),
+                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_weights WHERE vocabulary_id = ?) * ?)
             """, (vocabulary_id, document_id, tf, vocabulary_id, vocabulary_id, tf))
 
     def test_log(self, to_log):
@@ -155,7 +190,7 @@ class Database:
             cursor.execute("SELECT * FROM `tf_idf` LIMIT 100;")
             out = cursor.fetchall()
             print(len(out))
-            print(("vocabulary_id", "document_id", "frequency", "tf", "n", "df", "idf"))
+            print(("vocabulary_id", "document_id", "weight", "tf", "n", "df", "idf"))
             for l in out[:100]:
                 print(l)
 

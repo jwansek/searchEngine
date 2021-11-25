@@ -36,8 +36,8 @@ def main(search_words):
         logging.info("Merged scores...")
 
         sorted_scores = list(reversed(sorted(merged_scores.items(), key = lambda i: i[1])))
-        toshow = 20
-        print("Sorted scores...")
+        toshow = 30
+        logging.info("Sorted scores...")
 
         for i, j in enumerate(sorted_scores, 0):
             if i >= toshow:
@@ -45,6 +45,9 @@ def main(search_words):
 
             docid, score = j
             logging.info("%.2f - %d - %s" % (score, docid, db.get_document_name_by_id(docid)))
+
+    logging.info("%d results found in total" % len([i[1] for i in sorted_scores if i[1] > 0.1]))    
+        
         
 if __name__ == "__main__":
     main(sys.argv[1:])
