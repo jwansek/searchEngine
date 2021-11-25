@@ -19,22 +19,24 @@ import re
 import spacy
 from spacy import displacy
 nlp = spacy.load("en_core_web_sm")
+nlp.max_length = 100000000
 
 STOPWORDS = set(stopwords.words('english')).difference({
     "how", "because", "through", "or", "as", "about", "not",
     "no", "who", "of", "can", "over", "you"
-}).union({chr(i) for i in range(97, 123)}.difference({"a", "i"}))
+}).union({chr(i) for i in range(98, 123)})
+STOPWORDS.remove("a")
 LEM = WordNetLemmatizer()
 
 def main():
     numdocs = documents.get_num_documents()
-    docid = random.randint(1, numdocs)
-    parse_document(docid, documents.get_document_name_by_id(docid), numdocs)
+    #docid = random.randint(1, numdocs)
+    #parse_document(docid, documents.get_document_name_by_id(docid), numdocs)
 
-    # for document_id in range(1, numdocs):
-    #     parse_document(document_id, documents.get_document_name_by_id(document_id), numdocs)
+    for document_id in range(1, numdocs):
+        parse_document(document_id, documents.get_document_name_by_id(document_id), numdocs)
 
-    #     # break
+        #break
 
 def parse_region(raw_text, region_weight, document_id):
     terms = word_tokenize(raw_text)
