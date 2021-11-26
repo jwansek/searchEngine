@@ -84,6 +84,11 @@ class Database:
             cursor.execute("SELECT COUNT(*) FROM documents;")
             return cursor.fetchone()[0]
 
+    def get_max_linked_terms(self):
+        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
+            cursor.execute("SELECT MAX(`document_id`) + 2 FROM term_weights;")
+            return cursor.fetchone()[0]
+
     def append_terms(self, terms):
         with self.__connection.cursor(factory = DatabaseCursor) as cursor:
             cursor.executemany("INSERT OR IGNORE INTO vocabulary(term) VALUES (?);", [(term, ) for term in terms])
@@ -211,5 +216,6 @@ if __name__ == "__main__":
         # print(db.test_log(100))
         # print(db.test_log(21))
         # db.get_tf_idf_table()
-        for i, v in db.get_tf_idf_score("enzyme", 1).items():
-            print(i, v)
+        #for i, v in db.get_tf_idf_score("enzyme", 1).items():
+        #    print(i, v)
+        print(db.get_max_linked_terms())

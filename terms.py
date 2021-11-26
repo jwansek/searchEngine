@@ -30,15 +30,18 @@ LEM = WordNetLemmatizer()
 
 def main():
     numdocs = documents.get_num_documents()
+    with database.Database() as db:
+        startat = db.get_max_linked_terms() - 1
     #docid = random.randint(1, numdocs)
     #parse_document(docid, documents.get_document_name_by_id(docid), numdocs)
 
-    for document_id in range(1, numdocs):
+    for document_id in range(startat, numdocs):
         parse_document(document_id, documents.get_document_name_by_id(document_id), numdocs)
 
         #break
 
 def parse_region(raw_text, region_weight, document_id):
+    print("d: %d; w: %d; len = %d" % (document_id, region_weight, len(raw_text)))
     terms = word_tokenize(raw_text)
     terms = [re.sub(r"[^a-zA-Z0-9\s]", "", term).rstrip().lower() for term in terms]
     terms = [LEM.lemmatize(i) for i in terms if i != "" and i not in STOPWORDS]
@@ -85,10 +88,12 @@ def parse_document(document_id, document_path, numdocs):
     weighted_linked_terms += region_linked_terms
 
     # parse the main text, it has a weight of 1
-    text = [e.text for e in soup.find("div", {"class": "mw-parser-output"}).findChildren(recursive = True)]
-    region_weighted_terms, region_linked_terms = parse_region(" ".join(text), 1, document_id)
-    weighted_terms += region_weighted_terms
-    weighted_linked_terms += region_linked_terms
+    text = " ".join([e.text for e in soup.find("div", {"class": "mw-parser-output"}).findChildren(recursive = True)])
+    # split large texts into more manageable chunks
+    for splittext in [text[i:i+99999] for i in range(0, len(text), 99999)]:
+        region_weighted_terms, region_linked_terms = parse_region(splittext, 1, document_id)
+        weighted_terms += region_weighted_terms
+        weighted_linked_terms += region_linked_terms
 
     # parse html headers
     elemtexts = []
