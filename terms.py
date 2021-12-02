@@ -41,7 +41,7 @@ def main():
         #break
 
 def parse_region(raw_text, region_weight, document_id):
-    print("d: %d; w: %d; len = %d" % (document_id, region_weight, len(raw_text)))
+    print("d: %d; w: %d; len: %d" % (document_id, region_weight, len(raw_text)), end = "")
     terms = word_tokenize(raw_text)
     terms = [re.sub(r"[^a-zA-Z0-9\s]", "", term).rstrip().lower() for term in terms]
     terms = [LEM.lemmatize(i) for i in terms if i != "" and i not in STOPWORDS]
@@ -71,6 +71,7 @@ def append_region(terms, linked_words, region_weight, document_id):
     weighted_terms = {i[0]:i[1] * region_weight for i in collections.Counter(terms).items()}
     weighted_linked_terms = {i[0]:i[1] * region_weight for i in collections.Counter(linked_words_ids).items()}
 
+    print("; t: %d; lt: %d" % (len(weighted_terms), len(weighted_linked_terms)))
     return weighted_terms, weighted_linked_terms
 
 def parse_document(document_id, document_path, numdocs):

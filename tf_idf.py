@@ -6,6 +6,7 @@ def main():
         db.build_tf_idf_table()
 
         db.get_tf_idf_table()
+        db.get_tf_idf_table2()
 
 def calc_log_tf(tf):
     if tf == 0:

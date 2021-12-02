@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import math as maths
 import sqlite3
 import tf_idf
+import nltk
 import os
 
 class DatabaseCursor(sqlite3.Cursor):
@@ -102,6 +103,16 @@ class Database:
                 out[term] = cursor.fetchone()[0]
         return out
 
+    def get_linked_vocabulary_ids(self, linked_term):
+        ids = []
+        print(linked_term)
+        for term in linked_term:
+            out.append(str(self.get_vocabulary_ids([term])[term]))
+        print(",".join(ids))
+
+        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
+            cursor.execute("SELECT `vocabular")
+
     def append_merged_terms(self, merged_terms):
         with self.__connection.cursor(factory = DatabaseCursor) as cursor:
             cursor.executemany("INSERT OR IGNORE INTO `linked_terms`(`chain`) VALUES (?);", [(i, ) for i in merged_terms])
@@ -128,30 +139,53 @@ class Database:
 
     def build_tf_idf_table(self):
         with self.__connection.cursor(factory = DatabaseCursor) as cursor:
-            # cursor.execute("DROP VIEW IF EXISTS `tf_idf`;")
-            # cursor.execute("DROP VIEW IF EXISTS `vocab_count`;")
+            cursor.execute("DROP VIEW IF EXISTS `tf_idf_linked`;")
+            cursor.execute("DROP VIEW IF EXISTS `tf_idf_singles`;")
+            cursor.execute("DROP VIEW IF EXISTS `vocab_count_singles`;")
+            cursor.execute("DROP VIEW IF EXISTS `vocab_count_linked`;")
             # i wish i could find a way to do this with a single view but alas i am
             # not good enough at SQL
             cursor.execute("""
-            CREATE VIEW IF NOT EXISTS `vocab_count` AS 
+            CREATE VIEW IF NOT EXISTS `vocab_count_singles` AS 
             SELECT vocabulary_id, 
             COUNT(vocabulary_id) AS vocabulary_count
             FROM term_weights 
             GROUP BY vocabulary_id;
             """)
             cursor.execute("""
-            CREATE VIEW IF NOT EXISTS `tf_idf` AS SELECT
+            CREATE VIEW IF NOT EXISTS `tf_idf_singles` AS SELECT
             `term_weights`.`vocabulary_id` AS `vocabulary_id`,
             `document_id`,
             `term_weights`.`weight`,
             LOG_TF(`weight`) AS tf,
             (SELECT COUNT(`document_id`) FROM `documents`) AS n,
-            `vocab_count`.`vocabulary_count` AS df,
-            (SELECT LOG(CAST(COUNT(`document_id`) AS REAL) / `vocab_count`.`vocabulary_count`) FROM documents) AS idf,
-            LOG_TF(`weight`) * (SELECT LOG(CAST(COUNT(`document_id`) AS REAL) / `vocab_count`.`vocabulary_count`) FROM documents) AS tf_idf
+            `vocab_count_singles`.`vocabulary_count` AS df,
+            (SELECT LOG(CAST(COUNT(`document_id`) AS REAL) / `vocab_count_singles`.`vocabulary_count`) FROM documents) AS idf,
+            LOG_TF(`weight`) * (SELECT LOG(CAST(COUNT(`document_id`) AS REAL) / `vocab_count_singles`.`vocabulary_count`) FROM documents) AS tf_idf
             FROM `term_weights`
-            INNER JOIN `vocab_count`
-            ON `vocab_count`.`vocabulary_id` = `term_weights`.`vocabulary_id`
+            INNER JOIN `vocab_count_singles`
+            ON `vocab_count_singles`.`vocabulary_id` = `term_weights`.`vocabulary_id`
+            ;""")
+            cursor.execute("""
+            CREATE VIEW IF NOT EXISTS `vocab_count_linked` AS
+            SELECT linked_term_id, 
+            COUNT(linked_term_id) AS linked_term_count
+            FROM term_weights 
+            GROUP BY linked_term_id;
+            """)
+            cursor.execute("""
+            CREATE VIEW IF NOT EXISTS `tf_idf_linked` AS SELECT
+            `term_weights`.`linked_term_id` AS `linked_term_id`,
+            `document_id`,
+            `term_weights`.`weight`,
+            LOG_TF(`weight`) AS tf,
+            (SELECT COUNT(`document_id`) FROM `documents`) AS n,
+            `vocab_count_linked`.`linked_term_count` AS df,
+            (SELECT LOG(CAST(COUNT(`document_id`) AS REAL) / `vocab_count_linked`.`linked_term_count`) FROM documents) AS idf,
+            LOG_TF(`weight`) * (SELECT LOG(CAST(COUNT(`document_id`) AS REAL) / `vocab_count_linked`.`linked_term_count`) FROM documents) AS tf_idf
+            FROM `term_weights`
+            INNER JOIN `vocab_count_linked`
+            ON `vocab_count_linked`.`linked_term_id` = `term_weights`.`linked_term_id`
             ;""")
 
     def get_term_frequencies(self):
@@ -159,26 +193,6 @@ class Database:
             cursor.execute("SELECT * FROM `term_weights`;")
             return cursor.fetchall()
 
-    def append_tf_idf_table(self, tfs):
-        # print([(i[0], i[1], i[2], i[0], i[0], i[2]) for i in tfs][1])
-        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
-            cursor.executemany("""
-            INSERT INTO `tf_idf`(`vocabulary_id`, `document_id`, `tf`, `idf`, `tf_idf`)
-            VALUES (
-                ?, ?, ?, 
-                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_weights WHERE vocabulary_id = ?),
-                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_weights WHERE vocabulary_id = ?) * ?)
-            """, [(i[0], i[1], i[2], i[0], i[0], i[2]) for i in tfs])
-
-    def append_tf_idf_table_single(self, vocabulary_id, document_id, tf):
-        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
-            cursor.execute("""
-            INSERT INTO `tf_idf`(`vocabulary_id`, `document_id`, `tf`, `idf`, `tf_idf`)
-            VALUES (
-                ?, ?, ?, 
-                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_weights WHERE vocabulary_id = ?),
-                (SELECT log((SELECT CAST(COUNT(*) as REAL) FROM documents) / COUNT(*)) FROM term_weights WHERE vocabulary_id = ?) * ?)
-            """, (vocabulary_id, document_id, tf, vocabulary_id, vocabulary_id, tf))
 
     def test_log(self, to_log):
         with self.__connection.cursor(factory = DatabaseCursor) as cursor:
@@ -192,21 +206,79 @@ class Database:
 
     def get_tf_idf_table(self):
         with self.__connection.cursor(factory = DatabaseCursor) as cursor:
-            cursor.execute("SELECT * FROM `tf_idf` LIMIT 100;")
+            cursor.execute("SELECT * FROM `tf_idf_singles` LIMIT 100;")
             out = cursor.fetchall()
             print(len(out))
             print(("vocabulary_id", "document_id", "weight", "tf", "n", "df", "idf"))
             for l in out[:100]:
                 print(l)
 
-    def get_tf_idf_score(self, term, tf_idf_thresh = 0, limit = 1000):
+    def get_tf_idf_table2(self):
+        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
+            cursor.execute("SELECT * FROM `tf_idf_linked` LIMIT 100;")
+            out = cursor.fetchall()
+            for l in out[:100]:
+                print(l)
+
+    def get_tf_idf_score_single(self, term, tf_idf_thresh = 0, limit = 1000, multiplier = 1):
         with self.__connection.cursor(factory = DatabaseCursor) as cursor:
             cursor.execute("""
-            SELECT `document_id`, `tf_idf` FROM `tf_idf` WHERE `vocabulary_id` = (
+            SELECT `document_id`, `tf_idf` FROM `tf_idf_singles` WHERE `vocabulary_id` = (
                 SELECT `vocabulary_id` FROM `vocabulary` WHERE `term` = ?
             ) AND `tf_idf` > ? ORDER BY `tf_idf` DESC LIMIT ?;
             """, (term, tf_idf_thresh, limit))
-            return {i[0]: i[1] for i in cursor.fetchall()}
+            return {i[0]: maths.log10(i[1] * multiplier) for i in cursor.fetchall()}
+
+    def get_tf_idf_score_linked(self, linked_term, tf_idf_thresh = 0, limit = 1000, multiplier = 1):
+        word_ids = []
+        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
+            for word in linked_term:
+                cursor.execute("SELECT `vocabulary_id` FROM `vocabulary` WHERE `term` = ?", (word, ))
+                try:
+                    word_ids.append(str(cursor.fetchone()[0]))
+                except TypeError:
+                    continue
+        
+            chain = ",".join(word_ids)
+
+            cursor.execute("""
+            SELECT `document_id`, `tf_idf` FROM `tf_idf_linked` WHERE `linked_term_id` = (
+                SELECT `linked_term_id` FROM `linked_terms` WHERE `chain` = ?
+            ) AND `tf_idf` > ? ORDER BY `tf_idf` DESC LIMIT ?;
+            """, (chain, tf_idf_thresh, limit))
+            return {i[0]: maths.log10(i[1] * multiplier) for i in cursor.fetchall()}
+
+    def attempt_get_linked_words(self, words):
+        word_ids = []
+        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
+            for word in words:
+                cursor.execute("SELECT `vocabulary_id` FROM `vocabulary` WHERE `term` = ?", (word, ))
+                try:
+                    word_ids.append(str(cursor.fetchone()[0]))
+                except TypeError:
+                    continue
+        
+            combinations = [",".join(word_ids)]
+            for n in range(2, len(word_ids)):
+                combinations += [",".join(i) for i in nltk.ngrams(word_ids, n)]
+            # print(combinations)
+
+            if len(combinations) == 0:
+                return []
+            elif len(combinations) == 1:
+                sql =  "SELECT `chain` FROM `linked_terms` WHERE `chain` = '%s';" % combinations[0]
+            else:
+                sql = "SELECT `chain` FROM `linked_terms` WHERE `chain` IN %s;" % str(tuple(combinations))
+            # print(sql)
+            cursor.execute(sql)
+            found_ids = [i[0].split(",") for i in cursor.fetchall()]
+
+        return [[self.get_term_by_id(j) for j in i] for i in found_ids]
+
+    def get_term_by_id(self, id_):
+        with self.__connection.cursor(factory = DatabaseCursor) as cursor:
+            cursor.execute("SELECT `term` FROM `vocabulary` WHERE `vocabulary_id` = ?;", (id_, ))
+            return cursor.fetchone()[0]       
 
 if __name__ == "__main__":
     with Database() as db:
@@ -218,4 +290,4 @@ if __name__ == "__main__":
         # db.get_tf_idf_table()
         #for i, v in db.get_tf_idf_score("enzyme", 1).items():
         #    print(i, v)
-        print(db.get_max_linked_terms())
+        print(db.attempt_get_linked_words(["a", "computer", "science"]))
