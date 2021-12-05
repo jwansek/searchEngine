@@ -1,5 +1,7 @@
 from nltk.corpus import wordnet
 from nltk import pos_tag
+import markdown_renderer
+import reportWriter
 import collections
 import itertools  
 import database
@@ -70,9 +72,9 @@ def main(search_words):
             logging.info("Got %d scores for term '%s' (multiplier %d)" % (len(scores), single_term, search_weight))
             tf_idf_scores += scores
 
-        for linked_terms, search_weight in linked_terms.items():
-            scores = db.get_tf_idf_score_linked(linked_terms.split(","), tf_idf_thresh=0, multiplier=search_weight)
-            logging.info("Got %d scores for linked term '%s' (multiplier %d)" % (len(scores), str(linked_terms), search_weight))
+        for linked_term, search_weight in linked_terms.items():
+            scores = db.get_tf_idf_score_linked(linked_term.split(","), tf_idf_thresh=0, multiplier=search_weight)
+            logging.info("Got %d scores for linked term '%s' (multiplier %d)" % (len(scores), str(linked_term), search_weight))
             tf_idf_scores += scores
         
         sorted_scores = list(reversed(sorted(tf_idf_scores.items(), key = lambda i: i[1])))
@@ -80,15 +82,16 @@ def main(search_words):
         logging.info("Sorted scores...")
         logging.info("Results:\n\n")
 
-        for i, j in enumerate(sorted_scores, 0):
-            if i >= toshow:
-                break
-
-            docid, score = j
+        for docid, score in sorted_scores[:30]:
             logging.info("%.2f - %d - %s" % (score, docid, db.get_document_name_by_id(docid)))
 
-    logging.info("Got %d results in total. Took %.2f minutes (%.2fs per term)" % (len(tf_idf_scores), (time.time() - starttime) / 60, (time.time() - starttime) / (len(single_terms) + len(linked_terms))))
+    timetaken = time.time() - starttime
+    logging.info("Got %d results in total. Took %.2f minutes (%.2fs per term)" % (len(tf_idf_scores), timetaken / 60, timetaken / (len(single_terms) + len(linked_terms))))
+    md_path = reportWriter.write(sys.argv[1:], sorted_scores, timetaken, list(single_terms.keys()) + [i.replace(",", " ") for i in linked_terms.keys()])
+    logging.info("Report written to %s..." % md_path)
         
-        
+    markdown_renderer.render_and_view(md_path)
+    logging.info("Report rendered as HTML and showing..")
+
 if __name__ == "__main__":
     main(sys.argv[1:])
